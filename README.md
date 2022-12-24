@@ -1,0 +1,2 @@
+# trAIde
+Algorithmic trading webapp
