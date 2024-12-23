@@ -1,56 +1,59 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt
 
 def main():
-    l = []
     companies = ['COALINDIA', 'RELIANCE', 'ICICIBANK', 'TITAN', 'ITC', 'WIPRO', 'TCS', 'TATAMOTORS', 'HDFCLIFE', 'INFY']
-    for i in range(len(companies)):
-        df = yf.download(tickers=companies[i]+'.NS', period='3mo', interval='1d')
-        df.to_csv('datasets\\'+companies[i]+'.csv')
-        if i == 0:
-            df = df.reset_index()
-            l.append(df.index)
-            l.append(df['Date'])
-        l.append(df['Close'])
-
-    #PIVOT DATASET
-    df_pivot=pd.DataFrame(l).T
-    df_pivot.columns=['Symbol','Date'] + companies
-    df_pivot=df_pivot.reset_index(drop=True)
-    df_pivot= df_pivot[companies].astype('float64')
-
-    #CORR DATASET
-    corr_df = df_pivot.corr(method='pearson')
-    corr_df.head(10)
-
-    #CALC RISK
-    risk = corr_df.dropna()
-    # plt.figure(figsize=(8,5))
-    # plt.scatter(risk.mean(),risk.std(),s=25)
-
-    # plt.xlabel('Expected Return')
-    # plt.ylabel('Risk')
-
-
-    #For adding annotatios in the scatterplot
-    # for label,x,y in zip(risk.columns,risk.mean(),risk.std()):
-    #     plt.annotate(label,xy=(x,y),xytext=(-120,20),textcoords = 'offset points', ha = 'right', va = 'bottom',arrowprops = dict(arrowstyle='->',connectionstyle = 'arc3,rad=-0.5'))
+    stock_data = {}
     
-    # plt.show()
-
-    #Printing the top 5
-    z=pd.DataFrame(columns = ['ticker', 'return', 'risk'])
-    for label,x,y in zip(risk.columns,risk.mean(),risk.std()):
-        z.loc[len(z)] = [label, x, y]
-
-    z = z.sort_values(by = ['return', 'risk'], ascending = [False, True])
-    companies = list(z['ticker'].head(5))
-    print(companies)
+    # Download and preprocess data
+    for company in companies:
+        df = yf.download(tickers=company + '.NS', period='6mo', interval='1d')
+        df['Return'] = df['Close'].pct_change()
+        df['SMA_5'] = df['Close'].rolling(window=5).mean()
+        df['SMA_10'] = df['Close'].rolling(window=10).mean()
+        df['Volatility'] = df['Return'].rolling(window=5).std()
+        df = df.dropna()
+        stock_data[company] = df
+    
+    results = []
+    
+    # Train a model for each company
+    for company, df in stock_data.items():
+        features = df[['SMA_5', 'SMA_10', 'Volatility']]
+        target = df['Return']
+        
+        X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        
+        predicted_return = model.predict(X_test).mean()
+        risk = df['Return'].std()
+        
+        results.append({'Company': company, 'Predicted_Return': predicted_return, 'Risk': risk})
+    
+    # Create DataFrame and rank companies
+    result_df = pd.DataFrame(results)
+    result_df = result_df.sort_values(by=['Predicted_Return', 'Risk'], ascending=[False, True])
+    
+    # Select top 5 companies
+    top_companies = result_df.head(5)
+    print(top_companies)
+    
+    # Allocate weights based on predicted return and risk
     split = []
     for i in range(5):
-        split.append(z['return'][i] * (1 - z['risk'][i]))
+        split.append(top_companies.iloc[i]['Predicted_Return'] * (1 - top_companies.iloc[i]['Risk']))
     total = sum(split)
-    for i in range(len(split)):
-        split[i] = split[i]/total
-    return companies, split
+    split = [w / total for w in split]
+    
+    return list(top_companies['Company']), split
+
+if __name__ == '__main__':
+    companies, split = main()
+    print('Selected Companies:', companies)
+    print('Allocation Split:', split)
